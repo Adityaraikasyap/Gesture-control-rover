@@ -1,0 +1,296 @@
+*/ 
+#include <SPI.h>                // FOR SPI COMMUNICATION OF NRF24L01 WITH 
+ARDUINO 
+#include <nRF24L01.h>           // FOR NRF24L01 
+#include <RF24.h>               // FOR NRF24L01 
+#include <Wire.h>               // FOR I2C COMMUNICATION with OLED AND 
+ACCELEROMETER 
+#include <Adafruit_SH1106.h>    // FOR OLED 
+#include <Adafruit_GFX.h>       // FOR OLED 
+  
+RF24 radio(9, 10);              // nRF24L01 (CE, CSN) 
+const byte addresses[][6] = {"00001", "00002"};  //PIPE ADDRESS 
+  
+#define j1 4                   // JOYSTICK BUTTON 
+#define j2 5 
+#define t1 7                    // TOGGLE SWITCH  
+  
+const int MPU = 0x68;           // MPU6050 I2C ADDRESS 
+float AccX, AccY, AccZ; 
+float GyroX, GyroY, GyroZ; 
+float accAngleX, accAngleY, gyroAngleX, gyroAngleY; 
+float angleX, angleY; 
+float elapsedTime, currentTime, previousTime; 
+int c = 0; 
+  
+#define OLED_RESET -1             // ADAFRUIT OLED  
+Adafruit_SH1106 display(OLED_RESET); 
+  
+unsigned long time0 = 0; 
+unsigned long time1 = 0; 
+  
+struct data_package               // MAX SIZE OF THIS STRUCK IS 32 BYTES - 
+NRF24L01 BUFFER LIMIT 
+{ 
+  byte joy1X; 
+ 
+ 
+ 
+  byte joy1Y; 
+  byte j1button; 
+   
+  byte joy2X; 
+  byte joy2Y; 
+  byte j2button; 
+  
+  byte toggle1; 
+}; 
+data_package data;                 // VARIABLE IS data 
+  
+struct gps_package                 // STRUCTURE FOR GPS DATA MAX 32 BYTES 
+{ 
+  float latitude; 
+  float longitude; 
+  float altitude; 
+  float speed; 
+  byte  satellite; 
+  byte  abc; 
+}; 
+gps_package gpsdata;               // VARIABLE IS gpsdata 
+  
+void setup()  
+{ 
+  Serial.begin(9600); 
+  
+  initialize_MPU6050();                     // Initialize interface to the MPU6050 
+  
+  radio.begin();                            // SET RADIO 
+  radio.openWritingPipe(addresses[1]);      // 00002 
+  radio.openReadingPipe(1, addresses[0]);   // 00001 
+  radio.setAutoAck(false); 
+  radio.setDataRate(RF24_250KBPS); 
+  radio.setPALevel(RF24_PA_LOW); 
+   
+  pinMode(j1, INPUT_PULLUP);                // Activate the Arduino internal pull-up 
+resistors 
+  pinMode(j2, INPUT_PULLUP); 
+  pinMode(t1, INPUT_PULLUP); 
+  
+  
+  set_default();                            // SET INITIAL DEFAULT VATUES OF INPUTS 
+  
+  display.begin(SH1106_SWITCHCAPVCC, 0x3C); // INITIALIZE DISPLAY 
+WITH ADDRESS 
+  display.clearDisplay(); 
+  display.setTextColor(WHITE); 
+  display.setTextSize(1); 
+  display.setCursor(0,0); 
+  display.println("hello"); 
+ 
+ 
+ 
+  display.println("world"); 
+  display.display(); 
+} 
+  
+void loop()  
+{ 
+  radio.stopListening();                              // SET AS TRANSMITTER 
+  // READ ANALOG INPUTS 
+  data.joy1X = map(analogRead(A0), 1023, 0, 0, 255);  // Convert the analog read 
+value from 0 to 1023 into a BYTE value from 0 to 255 
+  data.joy1Y = map(analogRead(A1), 1023, 0, 0, 255); 
+  data.joy2X = map(analogRead(A2), 0, 1023, 0, 255); 
+  data.joy2Y = map(analogRead(A3), 0, 1023, 0, 255); 
+  
+  // READ DIGITAL INPUTS 
+  data.j1button = digitalRead(j1); 
+  data.j2button = digitalRead(j2); 
+  data.toggle1  = digitalRead(t1); 
+  
+  
+  if (digitalRead(t1) == 0)  
+  {  read_IMU(); } 
+  
+  radio.write( &data, sizeof(data_package) );          // Send the data from the structure 
+to the receiver 
+  
+  delay(5); 
+  
+  radio.startListening();                              // SET AS RECEIVER FOR OLED 
+  if ( radio.available() )  
+  { 
+  radio.read( &gpsdata, sizeof(gps_package) ); 
+  time0 = millis(); 
+  } 
+  time1 = millis(); 
+  
+    Serial.print(data.joy1X);   
+    Serial.print("  |  "); 
+    Serial.print(data.joy1Y);   
+    Serial.print("  |  "); 
+    Serial.print(data.joy2X);  
+    Serial.print("  |  "); 
+    Serial.println(data.joy2Y);   
+   
+  /* 
+  // SERIAL PRINT GPS RECEIVED DATA 
+    Serial.print("LATI: ");   
+    Serial.print( gpsdata.latitude ); 
+    Serial.print("  |  "); 
+    Serial.print("LONG: "); 
+ 
+ 
+ 
+    Serial.print( gpsdata.longitude ); 
+    Serial.print("  |  "); 
+    Serial.print("ALTI: "); 
+    Serial.print( gpsdata.altitude ); 
+    Serial.print("  |  "); 
+    Serial.print("Speed: "); 
+    Serial.print( gpsdata.speed ); 
+    Serial.print("Kmph"); 
+    Serial.print("  |  "); 
+    Serial.print("SAT: "); 
+    Serial.print( gpsdata.satellite ); 
+    Serial.print("  |  "); 
+    Serial.print("receiver data: "); 
+    Serial.println( gpsdata.abc ); 
+  // 
+  */ 
+  if ( time1 - time0 < 30000 ) 
+  {   
+    display.clearDisplay();                   // DISPLAY CO-ORDINATES 
+    display.setTextSize(1); 
+    display.setCursor(0, 0); 
+   
+    display.println("GPS LOCATION"); 
+  
+    display.print("LATI: ");                  // LATITUDE 
+    display.println(gpsdata.latitude,  6 ); 
+  
+    display.print("LONG: ");                  // LONGITUDE 
+    display.println(gpsdata.longitude, 6 ); 
+  
+    display.print("ALTI:");                   // ALTITUDE 
+    display.println(gpsdata.altitude,  3 ); 
+  
+    display.print("Speed:");                  // SPEED KMPH 
+    display.print(gpsdata.speed, 3 ); 
+    display.println(" Kmph"); 
+   
+    display.print("SAT : ");                    // NUM OF SATELLITE TRACKING 
+    display.println(gpsdata.satellite ); 
+  
+    display.display(); 
+  } 
+  else 
+  { 
+    display.clearDisplay(); 
+    display.setTextSize(2); 
+    display.setCursor(0,0); 
+    display.println("GPS"); 
+    display.println("CONNECTION"); 
+    display.println("LOST"); 
+ 
+ 
+ 
+    display.display(); 
+  } 
+  /* 
+  if( gpsdata.abc==1 )                        // IF GPS MODULE IS NOT GETTING DATA 
+  { 
+    display.clearDisplay(); 
+    display.setCursor(0, 0); 
+    display.setTextSize(1); 
+    display.println("GPS"); 
+    display.println("INITIALIZING"); 
+    display.display(); 
+  } 
+  gpsdata.abc=0; 
+  */ 
+  gpsdata.abc = 0;               // receiver data check 
+  delay(5); 
+} 
+void set_default() 
+{ 
+  data.joy1X    = 127; 
+  data.joy1Y    = 127; 
+  data.j1button = 1; 
+  
+  data.joy2X    = 127; 
+  data.joy2Y    = 127; 
+  data.j2button = 1; 
+  
+  data.toggle1 = 1; 
+  
+} 
+  
+void initialize_MPU6050()  
+{ 
+  Wire.begin();                      // Initialize comunication 
+  Wire.beginTransmission(MPU);       // Start communication with MPU6050 // 
+MPU=0x68 
+  Wire.write(0x6B);                  // Talk to the register 6B 
+  Wire.write(0x00);                  // Make reset - place a 0 into the 6B register 
+  Wire.endTransmission(true);        //end the transmission 
+  // Configure Accelerometer 
+  Wire.beginTransmission(MPU); 
+  Wire.write(0x1C);                  //Talk to the ACCEL_CONFIG register 
+  Wire.write(0x10);                  //Set the register bits as 00010000 (+/- 8g full scale 
+range) 
+  Wire.endTransmission(true); 
+  // Configure Gyro 
+  Wire.beginTransmission(MPU); 
+  Wire.write(0x1B);                   // Talk to the GYRO_CONFIG register (1B hex) 
+  Wire.write(0x10);                   // Set the register bits as 00010000 (1000dps full 
+scale) 
+} 
+Wire.endTransmission(true); 
+void read_IMU()  
+{ 
+// === Read acceleromter data === // 
+Wire.beginTransmission(MPU); 
+Wire.write(0x3B); // Start with register 0x3B (ACCEL_XOUT_H) 
+Wire.endTransmission(false); 
+Wire.requestFrom(MPU, 6, true); // Read 6 registers total, each axis value is stored 
+in 2 registers 
+//For a range of +-8g, we need to divide the raw values by 4096, according to the 
+datasheet 
+AccX = (Wire.read() << 8 | Wire.read()) / 4096.0; // X-axis value 
+AccY = (Wire.read() << 8 | Wire.read()) / 4096.0; // Y-axis value 
+AccZ = (Wire.read() << 8 | Wire.read()) / 4096.0; // Z-axis value 
+// Calculating angle values using 
+accAngleX = (atan(AccY / sqrt(pow(AccX, 2) + pow(AccZ, 2))) * 180 / PI) + 1.15; 
+// AccErrorX ~(-1.15) See the calculate_IMU_error()custom function for more 
+details 
+accAngleY = (atan(-1 * AccX / sqrt(pow(AccY, 2) + pow(AccZ, 2))) * 180 / PI) - 
+0.52; // AccErrorX ~(0.5) 
+// === Read gyro data === // 
+previousTime = currentTime;        // Previous time is stored before the actual time 
+read 
+currentTime = millis();            // Current time actual time read 
+elapsedTime = (currentTime - previousTime) / 1000;   // Divide by 1000 to get 
+seconds 
+Wire.beginTransmission(MPU); 
+Wire.write(0x43); // Gyro data first register address 0x43 
+Wire.endTransmission(false); 
+Wire.requestFrom(MPU, 4, true); // Read 4 registers total, each axis value is stored 
+in 2 registers 
+GyroX = (Wire.read() << 8 | Wire.read()) / 32.8; // For a 1000dps range we have to 
+divide first the raw value by 32.8, according to the datasheet 
+GyroY = (Wire.read() << 8 | Wire.read()) / 32.8; 
+GyroX = GyroX + 1.85; //// GyroErrorX ~(-1.85) 
+GyroY = GyroY - 0.15; // GyroErrorY ~(0.15) 
+// Currently the raw values are in degrees per seconds, deg/s, so we need to multiply 
+by sendonds (s) to get the angle in degrees 
+gyroAngleX = GyroX * elapsedTime; 
+gyroAngleY = GyroY * elapsedTime; 
+// Complementary filter - combine acceleromter and gyro angle values 
+angleX = 0.98 * (angleX + gyroAngleX) + 0.02 * accAngleX; 
+angleY = 0.98 * (angleY + gyroAngleY) + 0.02 * accAngleY; 
+// Map the angle values from -90deg to +90 deg into values from 0 to 255, like the 
+values we are getting from the Joystick 
+data.joy1X = map(angleX, -90, +90, 255, 0); 
+data.joy1Y = map(angleY, -90, +90, 255, 0); 
+} 
